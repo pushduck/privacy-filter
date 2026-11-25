@@ -101,6 +101,36 @@ func isLikelyPlaceholder(s string) bool {
 	return false
 }
 
+// contextNonSecretWords 是上下文口令里常见的非真值（配置示例、文档里的类型说明等），整词匹配。
+var contextNonSecretWords = map[string]bool{
+	"true": true, "false": true, "null": true, "nil": true, "none": true, "empty": true,
+	"undefined": true, "string": true, "number": true, "integer": true, "boolean": true,
+	"object": true, "array": true, "required": true, "optional": true, "default": true,
+	"hidden": true, "masked": true, "redacted": true, "example": true, "sample": true,
+	"dummy": true, "secret": true, "password": true, "token": true,
+}
+
+// isContextNonSecret 判断上下文口令的 value 是否明显不是真值。
+//
+// 早先用「len<=16 且熵<3.0」过滤占位符，但 8 字符串的熵上限就是 3.0，
+// 导致 asnkajn66、Passw0rd1 这类有重复字符的真实短口令几乎全被漏掉。
+// 现在改为：占位符词 / 类型词 / 极低熵（****、1111）/ 不含 ASCII 字母数字（中文句子）才放过。
+func isContextNonSecret(v string) bool {
+	if isLikelyPlaceholder(v) || contextNonSecretWords[strings.ToLower(v)] {
+		return true
+	}
+	if shannonEntropy(v) < 2.0 {
+		return true
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+			return false
+		}
+	}
+	return true // 没有任何 ASCII 字母数字：多为「密码是多少」这类中文句子
+}
+
 // hasJSONNoise 命中含 `,` —— 单 token 的真密钥不会有 `,`，gitleaks 宽规则
 // 误吃多 token 时常见。`"` 不能加进来，否则会误杀 key="..." 这种引号包裹的真密钥。
 func hasJSONNoise(s string) bool {
@@ -239,8 +269,8 @@ func (sd *secretDetector) detect(text string) []span {
 			if isTemplateVar(value) {
 				continue
 			}
-			// 低熵短串（"REPLACE_ME" / "TODO" / "null" / "abc" 等占位符）跳过
-			if len(value) <= 16 && shannonEntropy(value) < 3.0 {
+			// 占位符 / 类型词 / 中文句子等明显不是真值的跳过
+			if isContextNonSecret(value) {
 				continue
 			}
 			spans = append(spans, span{m[4], m[5], "[密钥]"})

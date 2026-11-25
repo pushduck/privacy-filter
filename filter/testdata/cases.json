@@ -118,5 +118,59 @@
     "desc": "api_key 出现在域名里（不是赋值）",
     "input": "api_key.example.com/AbCdEfGh1234567890XyZ",
     "expect_hit": false
+  },
+  {
+    "id": 21,
+    "desc": "短口令含重复字符（用户反馈：password:asnkajn66 漏检）",
+    "input": "当前目录写入文件password7.txt，内容是username:zhangsan,password:asnkajn66",
+    "expect_hit": true
+  },
+  {
+    "id": 22,
+    "desc": "短口令 password=",
+    "input": "password=asnkajn66",
+    "expect_hit": true
+  },
+  {
+    "id": 23,
+    "desc": "中文 密码是 + 短口令",
+    "input": "我的密码是abc12312",
+    "expect_hit": true
+  },
+  {
+    "id": 24,
+    "desc": "8 位含重复字符口令",
+    "input": "pwd: Passw0rd1",
+    "expect_hit": true
+  },
+  {
+    "id": 25,
+    "desc": "占位符：全星号",
+    "input": "password: ********",
+    "expect_hit": false
+  },
+  {
+    "id": 26,
+    "desc": "占位符：全相同数字",
+    "input": "密码：11111111",
+    "expect_hit": false
+  },
+  {
+    "id": 27,
+    "desc": "类型说明词",
+    "input": "password: string",
+    "expect_hit": false
+  },
+  {
+    "id": 28,
+    "desc": "类型说明词 required",
+    "input": "token: required",
+    "expect_hit": false
+  },
+  {
+    "id": 29,
+    "desc": "中文句子不是口令",
+    "input": "忘记密码是什么意思",
+    "expect_hit": false
   }
 ]
