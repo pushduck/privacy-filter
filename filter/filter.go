@@ -66,7 +66,9 @@ func (f *Filter) Redact(text string) Result {
 	spans = append(spans, detectPII(text)...)        // 结构化 PII
 	spans = append(spans, f.secrets.detect(text)...) // 密钥 / 凭证
 
-	merged := mergeSpans(spans)
+	// 代理配置层优先：分享链接被拆成 [密钥]@[服务器]:端口，
+	// 不能让 PII 层把 uuid@host 当邮箱、或高熵兜底把整条链接吃掉
+	merged := mergeWithPriority(mergeSpans(detectProxy(text)), spans)
 
 	// 单遍扫描重建文本：merged 已按起点升序且互不重叠，O(n)
 	var b strings.Builder
@@ -89,6 +91,22 @@ func (f *Filter) Redact(text string) Result {
 		Count:    len(merged),
 		Entities: entities,
 	}
+}
+
+// mergeWithPriority 保留全部 primary 区间（须已经过 mergeSpans），other 中与之重叠的丢弃，其余按 mergeSpans 合并。
+func mergeWithPriority(primary, other []span) []span {
+	if len(primary) == 0 {
+		return mergeSpans(other)
+	}
+	rest := other[:0:0]
+	for _, o := range other {
+		// primary 已按起点升序且互不重叠：找第一个 end > o.start 的区间判断是否相交
+		i := sort.Search(len(primary), func(i int) bool { return primary[i].end > o.start })
+		if i == len(primary) || primary[i].start >= o.end {
+			rest = append(rest, o)
+		}
+	}
+	return mergeSpans(append(append([]span{}, primary...), rest...))
 }
 
 // mergeSpans 丢弃无效与重叠区间：按起点升序、同起点取更长者，
