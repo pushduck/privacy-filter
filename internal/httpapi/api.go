@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"privacyfilter/filter"
+	"privacyfilter/internal/webui"
 )
 
 type redactRequest struct {
@@ -23,7 +24,7 @@ type redactResponse struct {
 	ElapsedMs float64 `json:"elapsed_ms"`
 }
 
-// Handler 返回一个已注册 /health、/redact、/redact/batch 的 http.Handler。
+// Handler 返回一个已注册 /health、/redact、/redact/batch 与脱敏对比网页 /ui/ 的 http.Handler。
 // 多个 cmd 共用，避免重复实现。
 func Handler(f *filter.Filter) http.Handler {
 	mux := http.NewServeMux()
@@ -55,6 +56,8 @@ func Handler(f *filter.Filter) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
+	mux.Handle("/ui/", http.StripPrefix("/ui", webui.Handler(f)))
+	mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusFound))
 	return mux
 }
 

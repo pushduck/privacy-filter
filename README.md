@@ -25,15 +25,16 @@ Pure Go, no model, no GPU, no CGO — a single static binary, millisecond latenc
 
 ---
 
-## Two detection layers
+## Three detection layers
 
 | Layer | Covers | Technique |
 |---|---|---|
 | Structured PII | Email, phone, national ID, bank card (Luhn-checked), IP | Regex |
 | Secrets / credentials | API keys, tokens, private keys, passwords written in prose, unknown high-entropy strings | gitleaks ruleset (keyword pre-filter) + contextual regex + Shannon-entropy fallback |
+| Proxy configs | mihomo / Clash configs, sing-box / Xray JSON, node share links, subscription URLs and base64 subscription bodies | Line-based YAML/JSON field scan + share-link parsing |
 
-Each layer emits `(start, end, placeholder)` spans; the spans are merged and de-overlapped, then the text is rebuilt in a single pass.
-Placeholders are typed — `[邮箱]` (email), `[电话]` (phone), `[身份证]` (national ID), `[银行卡]` (bank card), `[IP]`, `[密钥]` (secret) — and irreversible.
+Each layer emits `(start, end, placeholder)` spans; the spans are merged and de-overlapped (the proxy layer wins on overlap), then the text is rebuilt in a single pass.
+Placeholders are typed — `[邮箱]` (email), `[电话]` (phone), `[身份证]` (national ID), `[银行卡]` (bank card), `[IP]`, `[密钥]` (secret), `[服务器]` (server), `[域名]` (SNI / host), `[用户名]` (username), `[订阅链接]` (subscription URL), `[订阅内容]` (subscription body), `[节点]` (opaque node link) — and irreversible.
 
 > No person / place / organization name recognition — that needs an NER model, which costs seconds of CPU time on long text.
 
@@ -107,6 +108,8 @@ pbpaste | curl -s --data-binary @- http://127.0.0.1:8787/_pf/redact | pbcopy
 curl http://127.0.0.1:8787/_pf/health
 ```
 
+**Comparison web page**: open `http://127.0.0.1:8787/_pf/ui/`, paste text (or drop a file) on the left and see the redacted result on the right as you type. Switch to "原文标注" (annotated original) to see each replaced span and its type; the hit list below jumps to each hit. Built-in samples cover general text, mihomo configs, share links / subscriptions and sing-box JSON. The page loads no external resources and its API writes no logs; it returns matched originals to the browser, so keep it on localhost.
+
 **Logging**
 
 ```bash
@@ -138,6 +141,39 @@ pf-gateway -log /tmp/pf.log -log-level full -log-max-len 500            # file o
 - Redaction is irreversible: the model sees placeholders like `[密钥]`. If you ask an AI to rewrite a file that contains secrets, it may write the placeholder back into the file.
 - Products that use the vendor's own backend and don't allow a custom Base URL (ChatGPT / Claude web apps, Cursor's built-in models, …) can't use the gateway.
 
+### Proxy config redaction (mihomo / Clash)
+
+When you paste a mihomo config, node links or a subscription into an AI chat, server addresses, credentials and subscription URLs are replaced, while node names, ports, protocols, transport options and rules are kept so the model can still reason about the config:
+
+```yaml
+proxies:
+  - name: "香港 01"            # node name kept
+    type: vless
+    server: [服务器]
+    port: 443
+    uuid: [密钥]
+    servername: [域名]
+    reality-opts:
+      public-key: [密钥]
+      short-id: [密钥]
+  - {name: jp, type: ss, server: [服务器], port: 8388, cipher: aes-256-gcm, password: "[密钥]"}
+proxy-providers:
+  airport:
+    type: http
+    url: "[订阅链接]"
+    health-check:
+      url: https://cp.cloudflare.com/generate_204   # non-subscription URL kept
+```
+
+| Content | When | Result |
+|---|---|---|
+| Share links `vless:// vmess:// ss:// ssr:// trojan:// hysteria2:// hy2:// tuic:// anytls:// wireguard:// socks5://` … | Any text | `scheme://[密钥]@[服务器]:port?…&sni=[域名]&pbk=[密钥]…#name`; fully base64 links (vmess / ssr / legacy ss) become `[节点]`; localhost / loopback hosts are kept |
+| Subscription URLs | Any text | URLs with panel / converter patterns (`/api/v1/client/subscribe`, `/link/`, `/sub?target=clash`, `flag=clash`, `clash=1`, …) become `[订阅链接]` |
+| base64 subscription bodies | Any text | Long base64 strings that decode to share links become `[订阅内容]` |
+| Config fields | Only when the text has `proxies:` / `proxy-providers:` / `listeners:` sections or node types like `type: vless` | `server` → `[服务器]`; `password uuid psk private-key public-key short-id auth-str obfs-password token secret pre-shared-key …` → `[密钥]`; `servername sni host` → `[域名]`; `username` → `[用户名]`; `proxy-providers.*.url` → `[订阅链接]`; also `authentication`, `users`, `ca/cert/key: |` blocks |
+
+Handles block style, flow style `{k: v}`, commented-out fields (`# password: xxx`), block scalars (`|`, `>`), block lists, and sing-box / Xray JSON fields such as `"server_name"`, `"public_key"`, `"id"`. Plain YAML `server:` / `host:` / `key:` fields are left alone unless the proxy-config markers above are present.
+
 ### 2. Core package
 
 ```go
@@ -167,6 +203,8 @@ curl -X POST http://127.0.0.1:8088/redact -H 'Content-Type: application/json' \
   -d '{"text":"我的邮箱是 a@b.com，密码是 Hunter2xy"}'
 # {"redacted":"我的邮箱是 [邮箱]，密码是 [密钥]","hit":true,"count":2,"entities":[...],"elapsed_ms":0.08}
 ```
+
+The comparison web page is served at `http://127.0.0.1:8088/ui/` (also by `pf-server`).
 
 Endpoints: `GET /health`, `POST /redact`, `POST /redact/batch` (body `{"texts":[...]}`, returns an array of results).
 
@@ -223,10 +261,11 @@ protoc -I. --go_out=. --go_opt=module=privacyfilter \
 
 ```
 privacy-filter/
-├── filter/                  core package: Filter / New / NewFromTOML / Redact; pii.go, secrets.go
+├── filter/                  core package: Filter / New / NewFromTOML / Redact; pii.go, secrets.go, proxy.go
 ├── rules/                   gitleaks.toml + embed.go (go:embed into the binaries)
 ├── internal/
 │   ├── gateway/             LLM API redaction gateway (JSON walk + reverse proxy)
+│   ├── webui/               comparison web page (embedded index.html)
 │   ├── httpapi/  grpcapi/   thin HTTP / gRPC wrappers
 │   └── rulesload/           shared rule loading (PF_GITLEAKS_TOML or embedded)
 ├── cmd/
@@ -266,7 +305,7 @@ git fetch upstream && git merge upstream/main
 | ~2 KB | ~0.46ms |
 | ~32 KB | ~9ms |
 
-Both layers are O(n). Real prompts are faster.
+All layers are O(n). Real prompts are faster.
 
 ---
 

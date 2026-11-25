@@ -6,7 +6,8 @@
 
 Go 实现的 PII / 密钥脱敏工具，fork 自 `packyme/privacy-filter`。纯正则、无模型、无 CGO。
 
-- `filter/`：核心检测与替换，对外 API 是 `New`、`NewFromTOML`、`Redact`、`Stats`。改这里就是改检测行为。
+- `filter/`：核心检测与替换，对外 API 是 `New`、`NewFromTOML`、`Redact`、`Stats`。改这里就是改检测行为。三层：`pii.go`、`secrets.go`、`proxy.go`（mihomo / Clash 配置、分享链接、订阅；与其他层重叠时优先）。
+- `internal/webui/`：脱敏对比网页，`index.html` 通过 go:embed 内嵌，网关挂在 `/_pf/ui/`、HTTP 服务挂在 `/ui/`。
 - `rules/`：`gitleaks.toml` 通过 `embed.go` 编译进二进制。
 - `internal/gateway/`：LLM API 脱敏网关。`walk` 按 `contentKeys` / `skipKeys` 遍历 JSON，`proxy` 负责反向代理，`logging.go` 负责分级请求日志。
 - `internal/rulesload/`：各 cmd 共用的规则加载入口。新增 cmd 时用 `rulesload.Load()`，不要自己调 `filter.New`。
@@ -30,7 +31,7 @@ make dist     # 交叉编译 6 个平台到 dist/（scripts/dist.sh）
 - 代码注释、日志、错误信息用中文，与上游风格保持一致。
 - 必须 `CGO_ENABLED=0` 能交叉编译到 linux / darwin / windows × amd64 / arm64。不要引入需要 CGO 或平台专有的依赖。
 - `filter` 包只允许依赖 `BurntSushi/toml`，新依赖放在 `internal/` 或 `cmd/`。
-- 改检测逻辑时，在 `filter/cases_test.go` 或 `filter_test.go` 补用例；改网关的字段规则时，在 `internal/gateway/gateway_test.go` 补用例。
+- 改检测逻辑时，在 `filter/cases_test.go`、`filter_test.go` 或 `proxy_test.go`（代理配置层）补用例；改网关的字段规则时，在 `internal/gateway/gateway_test.go` 补用例。
 - 发布方式是推送 `v*` 标签，由 `.github/workflows/release.yml` 构建并发布。不要手动上传产物。
 - 本 fork 不维护 Docker。仓库里的 `Dockerfile` / `compose.yml` 是上游原样文件，不在 CI 中构建。
 
@@ -41,6 +42,7 @@ make dist     # 交叉编译 6 个平台到 dist/（scripts/dist.sh）
 - 日志实现在 `internal/gateway/logging.go`。一次请求的多行日志要拼成一次 `Print` 输出，避免并发请求的日志交错。
 - `skipKeys` 中的字段（signature、图片 data、id、tools schema 等）一旦被改写，上游会直接报错。新增协议适配时，先确认哪些字段必须原样保留。
 - 未命中时必须转发原始字节，不要重新序列化。
+- 对比网页接口会把命中原文返回给浏览器，不写日志、不加载外部资源，只要求 `Content-Type: application/json`（防跨站简单请求）。
 - 默认只监听 `127.0.0.1`。
 
 ## 同步上游

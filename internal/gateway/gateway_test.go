@@ -196,3 +196,34 @@ func TestSnippet(t *testing.T) {
 		t.Errorf("片段不符：%q / %q", before, after)
 	}
 }
+
+// 对话里粘贴的 mihomo 配置应被代理配置层脱敏；/_pf/ui/ 页面可访问。
+func TestProxyConfigInMessageAndWebUI(t *testing.T) {
+	f := newFilter(t)
+	yaml := "proxies:\\n  - name: a\\n    type: trojan\\n    server: node." + "example.net\\n    password: " + "p4ss" + "w0rd-x\\n"
+	body := `{"model":"m","messages":[{"role":"user","content":"帮我看看这个配置：\n` + yaml + `"}]}`
+	out, st, err := RedactJSON(f, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Contains(s, "example.net") || strings.Contains(s, "w0rd-x") || st.Types["[服务器]"] != 1 {
+		t.Errorf("代理配置未脱敏: %s %v", s, st.Types)
+	}
+
+	h := Handler(f, map[string]*url.URL{}, Options{})
+	for path, want := range map[string]int{"/_pf/ui": http.StatusFound, "/_pf/ui/": http.StatusOK} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s = %d，期望 %d", path, rec.Code, want)
+		}
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/_pf/ui/api/redact", strings.NewReader(`{"text":"server: x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"segments"`) {
+		t.Errorf("POST /_pf/ui/api/redact = %d %s", rec.Code, rec.Body.String())
+	}
+}

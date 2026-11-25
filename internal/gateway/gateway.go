@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"privacyfilter/filter"
+	"privacyfilter/internal/webui"
 )
 
 // DefaultRoutes 是内置上游。PF_ROUTES 中的同名路由会覆盖它们。
@@ -191,7 +192,8 @@ func BuildRoutes(custom string, withDefaults bool) (map[string]*url.URL, error) 
 	return routes, nil
 }
 
-// Handler 返回网关的 http.Handler：/<路由名>/... 反向代理，另含 /_pf/health 与 /_pf/redact。
+// Handler 返回网关的 http.Handler：/<路由名>/... 反向代理，另含 /_pf/health、/_pf/redact
+// 与脱敏对比网页 /_pf/ui/。
 func Handler(f *filter.Filter, routes map[string]*url.URL, opts Options) http.Handler {
 	lg := newReqLogger(opts)
 	mux := http.NewServeMux()
@@ -217,6 +219,9 @@ func Handler(f *filter.Filter, routes map[string]*url.URL, opts Options) http.Ha
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = io.WriteString(w, f.Redact(string(b)).Redacted)
 	})
+	// 脱敏对比网页（不写日志）：http://127.0.0.1:8787/_pf/ui/
+	mux.Handle("/_pf/ui/", http.StripPrefix("/_pf/ui", webui.Handler(f)))
+	mux.Handle("GET /_pf/ui", http.RedirectHandler("/_pf/ui/", http.StatusFound))
 	return mux
 }
 

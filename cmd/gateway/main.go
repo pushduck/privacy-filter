@@ -64,8 +64,9 @@ func main() {
 	if level >= gateway.LogHits {
 		log.Printf("⚠ 当前日志级别会记录被脱敏的敏感原文，请妥善保管日志，用完及时删除")
 	}
+	log.Printf("脱敏对比网页：http://%s/_pf/ui/", displayAddr(*listen))
 	for _, name := range names {
-		log.Printf("  http://%s/%s  →  %s", strings.Replace(*listen, "0.0.0.0", "127.0.0.1", 1), name, table[name])
+		log.Printf("  http://%s/%s  →  %s", displayAddr(*listen), name, table[name])
 	}
 	opts := gateway.Options{Level: level, MaxLen: *logMaxLen, Repeat: *logRepeat}
 	log.Fatal(http.ListenAndServe(*listen, gateway.Handler(f, table, opts)))
@@ -114,6 +115,11 @@ func openLogOutput(spec string) (io.Writer, func(), error) {
 			_ = fh.Close()
 		}
 	}, nil
+}
+
+// displayAddr 把监听地址转成可在浏览器打开的地址（0.0.0.0 → 127.0.0.1）。
+func displayAddr(listen string) string {
+	return strings.Replace(listen, "0.0.0.0", "127.0.0.1", 1)
 }
 
 func envOr(key, def string) string {

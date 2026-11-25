@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Filter · 脱敏对比</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #fff; --border: #e2e5ea; --text: #1f2328; --muted: #6a737d;
+    --accent: #2f6feb; --accent-weak: #e8effd; --code-bg: #fafbfc; --danger: #c93c37;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb; --muted: #8b949e;
+      --accent: #5b8def; --accent-weak: #1c2740; --code-bg: #12151b; --danger: #f0706b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .stats { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-left: auto; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+    font-size: 12px; border: 1px solid var(--border); background: var(--code-bg); white-space: nowrap;
+  }
+  .chip b { font-weight: 600; }
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 20px;
+  }
+  button, select, label.btn {
+    font: inherit; font-size: 13px; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; height: 32px;
+  }
+  button:hover, select:hover, label.btn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.08); }
+  .toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+  .toolbar .grow { flex: 1; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+  .hint { font-size: 12px; color: var(--muted); }
+  main {
+    flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 20px 12px;
+  }
+  .pane {
+    display: flex; flex-direction: column; min-height: 0; min-width: 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .pane-head {
+    display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 40px;
+    border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px;
+  }
+  .pane-head .meta { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .tabs { display: flex; gap: 2px; height: 100%; }
+  .tab {
+    border: 0; border-radius: 0; background: none; height: 100%; padding: 0 10px;
+    border-bottom: 2px solid transparent; color: var(--muted); font-weight: 600;
+  }
+  .tab:hover { color: var(--text); border-color: transparent; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  textarea, .out {
+    flex: 1; min-height: 0; width: 100%; margin: 0; border: 0; resize: none; outline: none;
+    padding: 12px 14px; background: var(--code-bg); color: var(--text);
+    font: 13px/1.6 var(--mono); white-space: pre-wrap; word-break: break-all; overflow: auto; tab-size: 4;
+  }
+  .drop textarea { outline: 2px dashed var(--accent); outline-offset: -6px; }
+  .out:empty::before { content: attr(data-empty); color: var(--muted); }
+  mark {
+    color: inherit; border-radius: 3px; padding: 0 1px;
+    background: hsl(var(--h) 85% 50% / .18); box-shadow: inset 0 -1.5px 0 hsl(var(--h) 75% 45% / .75);
+  }
+  mark.ph { font-weight: 600; color: hsl(var(--h) 70% 38%); }
+  @media (prefers-color-scheme: dark) { mark.ph { color: hsl(var(--h) 80% 72%); } }
+  mark.orig { text-decoration: line-through; text-decoration-color: hsl(var(--h) 70% 45% / .7); }
+  mark .tag {
+    display: inline-block; margin-left: 3px; padding: 0 4px; border-radius: 3px; font-size: 11px; line-height: 16px;
+    font-family: -apple-system, "PingFang SC", sans-serif; vertical-align: 1px; text-decoration: none;
+    background: hsl(var(--h) 70% 45%); color: #fff;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--h) 70% 50%); display: inline-block; }
+  section.detail {
+    margin: 0 20px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    max-height: 32vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  section.detail .pane-head { cursor: pointer; user-select: none; }
+  section.detail.collapsed .table-wrap { display: none; }
+  section.detail.collapsed .pane-head { border-bottom: 0; }
+  .caret { transition: transform .15s; color: var(--muted); }
+  section.detail.collapsed .caret { transform: rotate(-90deg); }
+  .table-wrap { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  td.num { color: var(--muted); width: 1%; white-space: nowrap; }
+  tr.jump { cursor: pointer; }
+  tr.jump:hover td { background: var(--accent-weak); }
+  .empty { padding: 16px; color: var(--muted); text-align: center; font-size: 13px; }
+  .err { color: var(--danger); }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0;
+    background: var(--text); color: var(--panel); padding: 6px 14px; border-radius: 6px; font-size: 13px;
+    transition: all .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  kbd { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+  @media (max-width: 900px) {
+    html, body { height: auto; }
+    main { flex: none; grid-template-columns: 1fr; }
+    .pane { height: 55vh; min-height: 280px; }
+    section.detail { max-height: none; }
+    .stats { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Privacy Filter <span>· 脱敏对比</span></h1>
+  <div class="stats" id="stats"><span class="chip">等待输入</span></div>
+</header>
+
+<div class="toolbar">
+  <select id="sample" title="载入示例">
+    <option value="">载入示例…</option>
+    <option value="general">通用文本（PII / 密钥）</option>
+    <option value="mihomo">mihomo / Clash 配置</option>
+    <option value="links">节点分享链接与订阅</option>
+    <option value="singbox">sing-box JSON</option>
+  </select>
+  <label class="btn" title="从本地读取文件（不上传，仅在浏览器内读取后提交脱敏）">
+    打开文件<input type="file" id="file" hidden>
+  </label>
+  <button id="clear">清空</button>
+  <span class="sep"></span>
+  <label class="toggle"><input type="checkbox" id="auto" checked> 输入时自动脱敏</label>
+  <label class="toggle"><input type="checkbox" id="sync" checked> 同步滚动</label>
+  <span class="grow"></span>
+  <span class="hint"><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 脱敏</span>
+  <button id="copy">复制结果</button>
+  <button id="download">下载结果</button>
+  <button id="run" class="primary">脱敏</button>
+</div>
+
+<main>
+  <div class="pane" id="inPane">
+    <div class="pane-head">输入原文<span class="meta" id="inMeta">0 字符</span></div>
+    <textarea id="input" spellcheck="false" placeholder="粘贴要测试的文本、mihomo / Clash 配置、节点分享链接或订阅链接，也可以把文件拖到这里。"></textarea>
+  </div>
+  <div class="pane">
+    <div class="pane-head">
+      <div class="tabs">
+        <button class="tab active" data-view="redacted">脱敏结果</button>
+        <button class="tab" data-view="annotated">原文标注</button>
+      </div>
+      <span class="meta" id="outMeta"></span>
+    </div>
+    <pre class="out" id="output" data-empty="脱敏结果会显示在这里。"></pre>
+  </div>
+</main>
+
+<section class="detail" id="detail">
+  <div class="pane-head" id="detailHead"><span class="caret">▾</span>命中明细<span class="meta" id="detailMeta"></span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>类型</th><th>行</th><th>命中原文</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="4" class="empty">暂无命中</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const input = $('input'), output = $('output');
+  let view = 'redacted', last = null, seq = 0, timer = 0;
+
+  // 每种占位符一个固定色相
+  const HUES = { '[密钥]': 0, '[服务器]': 210, '[IP]': 190, '[域名]': 160, '[用户名]': 280,
+    '[订阅链接]': 30, '[订阅内容]': 45, '[节点]': 320, '[邮箱]': 250, '[电话]': 130, '[身份证]': 345, '[银行卡]': 60 };
+  const hue = (label) => {
+    if (label in HUES) return HUES[label];
+    let h = 0; for (const c of label) h = (h * 31 + c.codePointAt(0)) % 360; return h;
+  };
+  const el = (tag, props = {}, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'style') n.style.cssText = v; else if (k in n) n[k] = v; else n.setAttribute(k, v);
+    }
+    n.append(...kids);
+    return n;
+  };
+
+  // ---------- 示例（敏感片段拆开拼接，样本本身不含连续的真实形态） ----------
+  const ip = (...p) => p.join('.');
+  const S = {
+    general: [
+      '你好，我是张三，邮箱 ' + 'zhangsan' + '@' + 'example.com' + '，手机 ' + '138' + '0013' + '8000' + '。',
+      '服务器 ' + ip(203, 0, 113, 10) + ' 的数据库密码是 ' + 'Tr0ub4dor' + '&3x，别外传。',
+      'export OPENAI_API_KEY=' + 'sk-proj-' + 'Q2hhbmdlTWVQbGVhc2UxMjM0NTY3ODkw' + 'abcdEFGH',
+      'Authorization: Bearer ' + 'eyJhbGciOiJIUzI1NiJ9' + '.' + 'eyJzdWIiOiIxMjM0NTY3ODkwIn0' + '.' + 'dBjftJeZ4CVPmB92K27uhbUJU1p1rwW1gFWFOEjXk',
+      '构建日志在 /var/log/build/20261125_run_42.log，镜像 registry.io/app@sha256:' + '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+    ].join('\n'),
+    mihomo: [
+      'mixed-port: 7890',
+      'allow-lan: false',
+      'external-controller: ' + ip(127, 0, 0, 1) + ':9090',
+      'secret: "' + 'mihomo-' + 'dashboard-2026' + '"',
+      'authentication:',
+      '  - "' + 'admin' + ':' + 'hunter2' + '"',
+      '',
+      'proxies:',
+      '  - name: "香港 01 | Reality"',
+      '    type: vless',
+      '    server: ' + ip(203, 0, 113, 7),
+      '    port: 443',
+      '    uuid: ' + 'b831381d-6324-' + '4d53-ad4f-8cda48b30811',
+      '    network: tcp',
+      '    tls: true',
+      '    udp: true',
+      '    flow: xtls-rprx-vision',
+      '    servername: www.microsoft.com',
+      '    reality-opts:',
+      '      public-key: ' + 'Z84J2IelR9ch3k8V' + 'tlVhhs5ycBUlXA7wHBWcBrjqnAw',
+      '      short-id: ' + '6ba85179e30d4fc2',
+      '    client-fingerprint: chrome',
+      '',
+      '  - {name: "日本 02", type: ss, server: jp.' + 'node.example.net, port: 8388, cipher: 2022-blake3-aes-128-gcm, password: "' + 'c3VwZXJzZWNy' + 'ZXQxMjM0NTY=' + '", udp: true}',
+      '',
+      '  - name: "美国 03 | Hy2"',
+      '    type: hysteria2',
+      '    server: us.' + 'node.example.net',
+      '    ports: 20000-30000',
+      '    password: ' + 'letme' + 'in-2026',
+      '    obfs: salamander',
+      '    obfs-password: ' + 'gawr' + 'gura',
+      '    sni: us.' + 'node.example.net',
+      '',
+      '  - name: "WireGuard"',
+      '    type: wireguard',
+      '    server: ' + ip(198, 51, 100, 4),
+      '    port: 51820',
+      '    ip: ' + ip(172, 16, 0, 2),
+      '    private-key: ' + 'eCtXsJZ27+4PbhDkHnB923t' + 'kUn2Gj59wZw5wFA75MnU=',
+      '    public-key: ' + 'Cr8hWlKvtDt7nrvf+f0brNQ' + 'QzabAqrjfBvas9pmowjo=',
+      '    # pre-shared-key: ' + '31aIhAPwktDGpH4JDhA8GN' + 'vjFXEf/a6+UaQRyOAiyfM=',
+      '',
+      'proxy-providers:',
+      '  airport:',
+      '    type: http',
+      '    url: "https://panel.' + 'example.com/api/v1/client/subscribe?token=' + '3f9c2a7d' + '41be8e06' + '"',
+      '    interval: 3600',
+      '    path: ./providers/airport.yaml',
+      '    health-check:',
+      '      enable: true',
+      '      url: https://cp.cloudflare.com/generate_204',
+      '      interval: 300',
+      '',
+      'proxy-groups:',
+      '  - name: PROXY',
+      '    type: select',
+      '    proxies: ["香港 01 | Reality", "日本 02", "美国 03 | Hy2"]',
+      '    use: [airport]',
+      '',
+      'rules:',
+      '  - DOMAIN-SUFFIX,github.com,PROXY',
+      '  - GEOIP,CN,DIRECT',
+      '  - MATCH,PROXY',
+    ].join('\n'),
+    links: [
+      '# 节点分享链接',
+      'vless://' + 'b831381d-6324-4d53-' + 'ad4f-8cda48b30811' + '@' + ip(203, 0, 113, 7) + ':443?encryption=none&security=reality&sni=www.microsoft.com&fp=chrome&pbk=' + 'Z84J2IelR9ch3k8VtlVhhs5' + 'ycBUlXA7wHBWcBrjqnAw' + '&sid=6ba85179e30d4fc2&type=tcp&flow=xtls-rprx-vision#%E9%A6%99%E6%B8%AF01',
+      'ss://' + 'MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206' + 'c3VwZXJzZWNyZXQ' + '@' + 'jp.node.example.net:8388#日本02',
+      'trojan://' + 'p4ss' + 'w0rd' + '@' + 'tj.node.example.net:443?sni=tj.node.example.net&type=ws&path=%2Fws#Trojan',
+      'hysteria2://' + 'letme' + 'in' + '@' + 'us.node.example.net:443?obfs=salamander&obfs-password=' + 'gawr' + 'gura' + '&sni=us.node.example.net#美国03',
+      'vmess://' + 'eyJ2IjoiMiIsInBzIjoiaGsiLCJhZGQiOi' + 'IxLjIuMy40IiwicG9ydCI6IjQ0MyIsImlkIjoiYWJjIn0=',
+      '',
+      '# 订阅链接',
+      '机场订阅：https://sub.' + 'example.com/api/v1/client/subscribe?token=' + 'a1b2c3d4' + 'e5f60718' + '，导入 mihomo 即可。',
+      '转换后：https://api.' + 'example.net/sub?target=clash&url=https%3A%2F%2Fsub.example.com%2Flink%2F' + 'Xy12Ab34',
+      '',
+      '# 直接粘贴的 base64 订阅内容',
+      btoa('trojan://' + 'p4ss' + '@' + 'h1.example.com:443#a\n' + 'ss://' + 'eA' + '@' + 'h2.example.com:8388#b\n'),
+      '',
+      '# 本机代理地址不脱敏',
+      'export https_proxy=http://' + ip(127, 0, 0, 1) + ':7890 all_proxy=socks5://' + ip(127, 0, 0, 1) + ':7890',
+    ].join('\n'),
+    singbox: JSON.stringify({
+      outbounds: [{
+        type: 'vless', tag: 'reality', server: ip(203, 0, 113, 7), server_port: 443,
+        uuid: 'b831381d-6324-' + '4d53-ad4f-8cda48b30811', flow: 'xtls-rprx-vision',
+        tls: { enabled: true, server_name: 'www.microsoft.com',
+          reality: { enabled: true, public_key: 'Z84J2IelR9ch3k8Vtl' + 'Vhhs5ycBUlXA7wHBWcBrjqnAw', short_id: '6ba8' + '5179' } },
+      }, { type: 'direct', tag: 'direct' }],
+    }, null, 2),
+  };
+
+  // ---------- 脱敏 ----------
+  async function run() {
+    const text = input.value;
+    $('inMeta').textContent = text.length.toLocaleString() + ' 字符 · ' + (text ? text.split('\n').length : 0) + ' 行';
+    if (!text) { last = null; render(); return; }
+    const id = ++seq;
+    try {
+      const resp = await fetch('api/redact', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) throw new Error((await resp.text()) || ('HTTP ' + resp.status));
+      const data = await resp.json();
+      if (id !== seq) return; // 已有更新的请求
+      last = data;
+      render();
+    } catch (e) {
+      if (id !== seq) return;
+      last = null;
+      output.replaceChildren(el('span', { className: 'err' }, '脱敏失败：' + e.message));
+      $('stats').replaceChildren(el('span', { className: 'chip err' }, '请求失败'));
+    }
+  }
+
+  function render() {
+    const st = $('stats'), rows = $('rows');
+    if (!last) {
+      output.replaceChildren();
+      st.replaceChildren(el('span', { className: 'chip' }, '等待输入'));
+      rows.replaceChildren(el('tr', {}, el('td', { colSpan: 4, className: 'empty' }, '暂无命中')));
+      $('outMeta').textContent = ''; $('detailMeta').textContent = '';
+      return;
+    }
+    // 统计
+    const chips = [
+      el('span', { className: 'chip' }, '命中 ', el('b', {}, String(last.count)), ' 处'),
+      el('span', { className: 'chip' }, '耗时 ', el('b', {}, last.elapsed_ms.toFixed(2)), ' ms'),
+    ];
+    Object.entries(last.types).sort((a, b) => b[1] - a[1]).forEach(([t, n]) => {
+      chips.push(el('span', { className: 'chip', style: '--h:' + hue(t) }, el('i', { className: 'dot' }), t + ' ×' + n));
+    });
+    st.replaceChildren(...chips);
+
+    // 输出
+    const frag = document.createDocumentFragment();
+    let marks = 0;
+    for (const s of last.segments) {
+      if (!s.label) { frag.append(s.text); continue; }
+      const h = '--h:' + hue(s.label);
+      if (view === 'redacted') {
+        frag.append(el('mark', { className: 'ph', style: h, title: s.text, 'data-i': marks }, s.label));
+      } else {
+        frag.append(el('mark', { className: 'orig', style: h, title: s.label, 'data-i': marks }, s.text, el('span', { className: 'tag' }, s.label.slice(1, -1))));
+      }
+      marks++;
+    }
+    output.replaceChildren(frag);
+    $('outMeta').textContent = view === 'redacted'
+      ? last.redacted.length.toLocaleString() + ' 字符 · 悬停占位符查看原文'
+      : '删除线为将被替换的原文';
+
+    // 明细
+    $('detailMeta').textContent = last.entities.length ? '点击行定位' : '';
+    if (!last.entities.length) {
+      rows.replaceChildren(el('tr', {}, el('td', { colSpan: 4, className: 'empty' }, '未发现敏感信息，结果与原文一致')));
+      return;
+    }
+    rows.replaceChildren(...last.entities.map((e, i) => {
+      const txt = e.text.length > 160 ? e.text.slice(0, 160) + '…' : e.text;
+      const tr = el('tr', { className: 'jump' },
+        el('td', { className: 'num' }, String(i + 1)),
+        el('td', {}, el('span', { className: 'chip', style: '--h:' + hue(e.type) }, el('i', { className: 'dot' }), e.type)),
+        el('td', { className: 'num' }, String(e.line)),
+        el('td', { className: 'mono', title: e.text }, txt));
+      tr.addEventListener('click', () => locate(i));
+      return tr;
+    }));
+  }
+
+  function locate(i) {
+    const m = output.querySelector('mark[data-i="' + i + '"]');
+    if (!m) return;
+    m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    m.animate([{ outline: '2px solid var(--accent)' }, { outline: '2px solid transparent' }], { duration: 1200 });
+  }
+
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 250); };
+
+  // ---------- 交互 ----------
+  input.addEventListener('input', () => { if ($('auto').checked) schedule(); });
+  input.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+    if (e.key === 'Tab') { e.preventDefault(); document.execCommand('insertText', false, '  '); }
+  });
+  $('run').addEventListener('click', run);
+  $('clear').addEventListener('click', () => { input.value = ''; run(); input.focus(); });
+  $('sample').addEventListener('change', (e) => {
+    if (!e.target.value) return;
+    input.value = S[e.target.value]; e.target.value = ''; run();
+  });
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
+    view = t.dataset.view; render();
+  }));
+  $('detailHead').addEventListener('click', () => $('detail').classList.toggle('collapsed'));
+
+  const toast = (msg) => {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1600);
+  };
+  $('copy').addEventListener('click', async () => {
+    if (!last) return toast('没有可复制的结果');
+    try { await navigator.clipboard.writeText(last.redacted); toast('已复制脱敏结果'); }
+    catch { toast('复制失败：浏览器不允许访问剪贴板'); }
+  });
+  $('download').addEventListener('click', () => {
+    if (!last) return toast('没有可下载的结果');
+    const a = el('a', { href: URL.createObjectURL(new Blob([last.redacted], { type: 'text/plain' })), download: 'redacted.txt' });
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  const loadFile = (f) => {
+    if (!f) return;
+    if (f.size > 8 << 20) return toast('文件超过 8MB');
+    f.text().then((t) => { input.value = t; run(); toast('已载入 ' + f.name); });
+  };
+  $('file').addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
+  const pane = $('inPane');
+  ['dragenter', 'dragover'].forEach((ev) => pane.addEventListener(ev, (e) => { e.preventDefault(); pane.classList.add('drop'); }));
+  ['dragleave', 'drop'].forEach((ev) => pane.addEventListener(ev, (e) => { e.preventDefault(); pane.classList.remove('drop'); }));
+  pane.addEventListener('drop', (e) => loadFile(e.dataTransfer.files[0]));
+
+  // 按比例同步滚动
+  let lock = false;
+  const syncScroll = (from, to) => from.addEventListener('scroll', () => {
+    if (!$('sync').checked || lock) return;
+    const max = from.scrollHeight - from.clientHeight;
+    lock = true;
+    to.scrollTop = max > 0 ? (from.scrollTop / max) * (to.scrollHeight - to.clientHeight) : 0;
+    requestAnimationFrame(() => { lock = false; });
+  });
+  syncScroll(input, output); syncScroll(output, input);
+
+  input.focus();
+})();
+</script>
+</body>
+</html>

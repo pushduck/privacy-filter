@@ -25,15 +25,16 @@
 
 ---
 
-## 两层检测
+## 三层检测
 
 | 层 | 负责 | 技术 |
 |---|---|---|
 | 结构化 PII | 邮箱、手机号、身份证、银行卡（Luhn 校验）、IP | 正则 |
 | 密钥 / 凭证 | API key、token、私钥、句子里的口令、未知高熵随机串 | gitleaks 规则集（关键词预筛）+ 上下文正则 + 香农熵兜底 |
+| 代理配置 | mihomo / Clash 配置、sing-box / Xray JSON、节点分享链接、订阅链接与 base64 订阅内容 | 按行轻量解析 YAML/JSON 字段 + 链接结构拆解 |
 
-各层产出 `(起点, 终点, 占位符)` 区间，合并去重叠后单遍重建文本。
-占位符带类型（`[邮箱] [电话] [身份证] [银行卡] [IP] [密钥]`），不可逆，不能还原。
+各层产出 `(起点, 终点, 占位符)` 区间，合并去重叠后单遍重建文本（重叠时代理配置层优先）。
+占位符带类型（`[邮箱] [电话] [身份证] [银行卡] [IP] [密钥] [服务器] [域名] [用户名] [订阅链接] [订阅内容] [节点]`），不可逆，不能还原。
 
 > 不识别人名、地名、机构名。这类识别需要 NER 模型，在 CPU 上处理长文本要数秒，已按需求移除。
 > 高危身份信息（身份证、银行卡、密钥等）全部由正则覆盖。
@@ -110,6 +111,8 @@ pbpaste | curl -s --data-binary @- http://127.0.0.1:8787/_pf/redact | pbcopy
 curl http://127.0.0.1:8787/_pf/health
 ```
 
+**脱敏对比网页**：浏览器打开 `http://127.0.0.1:8787/_pf/ui/`，左侧粘贴原文（或拖入文件），右侧实时显示脱敏结果；可切换"原文标注"查看每处被替换的原文与类型，下方列出命中明细（点击定位）。内置通用文本、mihomo 配置、分享链接与订阅、sing-box JSON 示例。页面不加载任何外部资源，接口不写日志；命中原文会返回给浏览器，请只在本机使用。
+
 **日志**
 
 ```bash
@@ -140,6 +143,39 @@ pf-gateway -log /tmp/pf.log -log-level full -log-max-len 500            # 只写
 
 - 脱敏不可逆：模型看到的是 `[密钥]` 这类占位符。如果让 AI 改写含密钥的文件，它可能把占位符写回文件。
 - 走厂商自家后端、不能改 Base URL 的产品（网页版 ChatGPT / Claude、Cursor 内置模型等）无法接入。
+
+### 代理配置脱敏（mihomo / Clash）
+
+把 mihomo 配置、节点链接或订阅贴给 AI 排查问题时，服务器地址、凭据和订阅链接都会被替换，节点名、端口、协议、传输参数、规则保持原样，AI 仍能看懂配置结构：
+
+```yaml
+proxies:
+  - name: "香港 01"            # 节点名保留
+    type: vless
+    server: [服务器]
+    port: 443
+    uuid: [密钥]
+    servername: [域名]
+    reality-opts:
+      public-key: [密钥]
+      short-id: [密钥]
+  - {name: jp, type: ss, server: [服务器], port: 8388, cipher: aes-256-gcm, password: "[密钥]"}
+proxy-providers:
+  airport:
+    type: http
+    url: "[订阅链接]"
+    health-check:
+      url: https://cp.cloudflare.com/generate_204   # 非订阅链接保留
+```
+
+| 内容 | 何时检测 | 处理 |
+|---|---|---|
+| 分享链接 `vless:// vmess:// ss:// ssr:// trojan:// hysteria2:// hy2:// tuic:// anytls:// wireguard:// socks5://` 等 | 任意文本 | `scheme://[密钥]@[服务器]:端口?…&sni=[域名]&pbk=[密钥]…#节点名`；vmess / ssr / 旧式 ss 这类整体 base64 的链接替换为 `[节点]`；本机地址（localhost、回环）不脱 |
+| 订阅链接 | 任意文本 | URL 带机场面板 / 订阅转换特征（`/api/v1/client/subscribe`、`/link/`、`/sub?target=clash`、`flag=clash`、`clash=1` 等）整条替换为 `[订阅链接]` |
+| base64 订阅内容 | 任意文本 | 解码后是一组分享链接的长 base64 串替换为 `[订阅内容]` |
+| 配置字段 | 文本出现 `proxies:` / `proxy-providers:` / `listeners:` 等顶层段落，或 `type: vless` 等节点类型时 | `server` → `[服务器]`；`password uuid psk private-key public-key short-id auth-str obfs-password token secret pre-shared-key …` → `[密钥]`；`servername sni host` → `[域名]`；`username` → `[用户名]`；`proxy-providers.*.url` → `[订阅链接]`；`authentication`、`users`、`ca/cert/key: |` 块等一并处理 |
+
+支持块样式、流样式 `{k: v}`、注释掉的字段（`# password: xxx`）、块标量（`|`、`>`）、块列表，以及 sing-box / Xray JSON 的 `"server_name"`、`"public_key"`、`"id"` 等字段。普通 YAML 里的 `server:`、`host:`、`key:` 不会被误当成节点信息（需要先命中上面的代理配置特征）。
 
 ### 2. 核心包（推荐自研网关使用）
 
@@ -173,6 +209,7 @@ curl -X POST http://127.0.0.1:8088/redact -H 'Content-Type: application/json' \
 ```
 
 接口：`GET /health`、`POST /redact`、`POST /redact/batch`（请求体 `{"texts":[...]}`，返回结果数组）。
+脱敏对比网页在 `http://127.0.0.1:8088/ui/`（`pf-server` 同样提供）。
 
 ### 4. gRPC 服务
 
@@ -227,10 +264,11 @@ protoc -I. --go_out=. --go_opt=module=privacyfilter \
 
 ```
 privacy-filter/
-├── filter/                  核心包：Filter / New / NewFromTOML / Redact；pii.go、secrets.go
+├── filter/                  核心包：Filter / New / NewFromTOML / Redact；pii.go、secrets.go、proxy.go
 ├── rules/                   gitleaks.toml + embed.go（go:embed 内嵌进二进制）
 ├── internal/
 │   ├── gateway/             LLM API 脱敏网关（JSON 遍历脱敏 + 反向代理）
+│   ├── webui/               脱敏对比网页（index.html 内嵌）
 │   ├── httpapi/  grpcapi/   HTTP / gRPC 薄封装
 │   └── rulesload/           各 cmd 共用的规则加载（PF_GITLEAKS_TOML 或内嵌）
 ├── cmd/
@@ -271,7 +309,7 @@ git fetch upstream && git merge upstream/main
 | ~2 KB | ~0.46ms |
 | ~32 KB | ~9ms |
 
-两层检测都是 O(n)。真实 prompt 中 PII 没这么密集，会更快。
+各层检测都是 O(n)。真实 prompt 中 PII 没这么密集，会更快。
 
 ---
 
