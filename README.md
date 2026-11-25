@@ -36,7 +36,7 @@ Pure Go, no model, no GPU, no CGO — a single static binary, millisecond latenc
 Each layer emits `(start, end, placeholder)` spans; the spans are merged and de-overlapped (the proxy layer wins on overlap), then the text is rebuilt in a single pass.
 Placeholders are typed — `[邮箱]` (email), `[电话]` (phone), `[身份证]` (national ID), `[银行卡]` (bank card), `[IP]`, `[密钥]` (secret), `[服务器]` (server), `[域名]` (SNI / host), `[用户名]` (username), `[订阅链接]` (subscription URL), `[订阅内容]` (subscription body), `[节点]` (opaque node link) — and irreversible.
 
-> No person / place / organization name recognition — that needs an NER model, which costs seconds of CPU time on long text.
+> No person / place / organization name recognition — that needs an NER model, which costs seconds of CPU time on long text. Known fixed names or code names can be configured via "Custom matching".
 
 ---
 
@@ -174,6 +174,33 @@ proxy-providers:
 
 Handles block style, flow style `{k: v}`, commented-out fields (`# password: xxx`), block scalars (`|`, `>`), block lists, and sing-box / Xray JSON fields such as `"server_name"`, `"public_key"`, `"id"`. Plain YAML `server:` / `host:` / `key:` fields are left alone unless the proxy-config markers above are present.
 
+### Custom matching (names, code names, other fixed words)
+
+Regex can't detect personal names. Put your name, initials, project code names and so on in a config file; matches are replaced with the given value, or with the same number of `*` characters when `replace` is omitted (`天穹计划` → `****`). JSON or YAML; a single word, a word list, or a rule list:
+
+```yaml
+# custom.yaml
+- match: [yeshuwei, ysw, 叶书伟]   # string or array
+  replace: "[姓名]"                 # optional; defaults to an equal-length * mask
+- 天穹计划                          # bare word = equal-length mask
+- match: ACME
+  case_sensitive: true             # case-insensitive by default
+  allow_partial: true              # ASCII words match whole words by default (ysw doesn't hit ysww / user_ysw)
+```
+
+```json
+["yeshuwei", "ysw", {"match": "叶书伟", "replace": "[姓名]"}]
+```
+
+```bash
+PF_CUSTOM_RULES=./custom.yaml ./pf-gateway        # or ./pf-gateway -custom ./custom.yaml
+PF_CUSTOM_RULES=a.yaml,b.json ./pf-http          # comma-separated for multiple files
+```
+
+- Literal matching (not regex); no word-boundary check for CJK.
+- Takes priority over other layers, except when the word lies entirely inside another hit (email, secret…), where the outer hit is redacted as a whole so nothing around it leaks.
+- If a config file can't be read or parsed (including misspelled fields) the program **exits** instead of running with incomplete rules; startup logs show the word count only, never the words.
+
 ### 2. Core package
 
 ```go
@@ -232,6 +259,7 @@ Service `filter.v1.PrivacyFilter`, methods `Redact` / `RedactBatch`, defined in 
 | `PF_PORT` | `8088` | http / server | HTTP listen port |
 | `PF_GRPC_PORT` | `8089` | grpc / server | gRPC listen port |
 | `PF_GITLEAKS_TOML` | empty (embedded rules) | all | External gitleaks rules file; falls back to the embedded rules if it fails to load |
+| `PF_CUSTOM_RULES` / `-custom` | empty | all (`-custom` gateway only) | Custom matching config files (JSON/YAML), comma-separated; exits on load failure, see "Custom matching" |
 
 ---
 

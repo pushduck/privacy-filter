@@ -34,6 +34,7 @@ type span struct {
 // Filter 持有编译好的规则。创建后只读，可并发安全地复用。
 type Filter struct {
 	secrets *secretDetector
+	custom  *customMatcher // 自定义匹配，可为 nil
 }
 
 // New 创建一个 Filter。gitleaksTOML 为 gitleaks 规则文件路径；
@@ -69,6 +70,11 @@ func (f *Filter) Redact(text string) Result {
 	// 代理配置层优先：分享链接被拆成 [密钥]@[服务器]:端口，
 	// 不能让 PII 层把 uuid@host 当邮箱、或高熵兜底把整条链接吃掉
 	merged := mergeWithPriority(mergeSpans(detectProxy(text)), spans)
+	// 自定义匹配优先：与其他层部分重叠时以自定义替换为准；
+	// 但完全落在其他层命中内部的（如邮箱、密钥里的姓名）交给外层整段脱敏，避免外层其余部分泄露
+	if custom := f.custom.detect(text); len(custom) > 0 {
+		merged = mergeWithPriority(mergeSpans(dropContained(custom, merged)), merged)
+	}
 
 	// 单遍扫描重建文本：merged 已按起点升序且互不重叠，O(n)
 	var b strings.Builder
@@ -107,6 +113,19 @@ func mergeWithPriority(primary, other []span) []span {
 		}
 	}
 	return mergeSpans(append(append([]span{}, primary...), rest...))
+}
+
+// dropContained 丢弃 spans 中完全落在 outer（须已经过 mergeSpans）某个区间内的项。
+func dropContained(spans, outer []span) []span {
+	out := spans[:0:0]
+	for _, s := range spans {
+		i := sort.Search(len(outer), func(i int) bool { return outer[i].end > s.start })
+		if i < len(outer) && outer[i].start <= s.start && outer[i].end >= s.end {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // mergeSpans 丢弃无效与重叠区间：按起点升序、同起点取更长者，

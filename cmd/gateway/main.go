@@ -30,6 +30,7 @@ func main() {
 		"日志级别：basic（命中摘要）| request（每个请求）| hits（+命中原文）| full（+字段全文）（环境变量 PF_LOG_LEVEL）")
 	logMaxLen := flag.Int("log-max-len", envInt("PF_LOG_MAX_LEN", 2000), "full 级别下单个字段最多打印字符数，0 不截断（环境变量 PF_LOG_MAX_LEN）")
 	logRepeat := flag.Bool("log-repeat", envBool("PF_LOG_REPEAT"), "hits/full 级别下重复打印历史消息中已出现过的命中（环境变量 PF_LOG_REPEAT=1）")
+	custom := flag.String("custom", os.Getenv("PF_CUSTOM_RULES"), "自定义匹配配置文件（JSON/YAML），逗号分隔可写多个（环境变量 PF_CUSTOM_RULES）")
 	flag.Parse()
 
 	if *showVersion {
@@ -53,7 +54,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	f := rulesload.Load()
+	f := rulesload.LoadWith(*custom)
 
 	names := make([]string, 0, len(table))
 	for name := range table {

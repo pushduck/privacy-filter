@@ -36,7 +36,7 @@
 各层产出 `(起点, 终点, 占位符)` 区间，合并去重叠后单遍重建文本（重叠时代理配置层优先）。
 占位符带类型（`[邮箱] [电话] [身份证] [银行卡] [IP] [密钥] [服务器] [域名] [用户名] [订阅链接] [订阅内容] [节点]`），不可逆，不能还原。
 
-> 不识别人名、地名、机构名。这类识别需要 NER 模型，在 CPU 上处理长文本要数秒，已按需求移除。
+> 不识别人名、地名、机构名。这类识别需要 NER 模型，在 CPU 上处理长文本要数秒，已按需求移除；已知的固定姓名、代号可用「自定义匹配」配置。
 > 高危身份信息（身份证、银行卡、密钥等）全部由正则覆盖。
 
 ---
@@ -177,6 +177,33 @@ proxy-providers:
 
 支持块样式、流样式 `{k: v}`、注释掉的字段（`# password: xxx`）、块标量（`|`、`>`）、块列表，以及 sing-box / Xray JSON 的 `"server_name"`、`"public_key"`、`"id"` 等字段。普通 YAML 里的 `server:`、`host:`、`key:` 不会被误当成节点信息（需要先命中上面的代理配置特征）。
 
+### 自定义匹配（姓名、代号等固定词）
+
+正则识别不了人名，可以把自己的姓名、缩写、项目代号等写进配置文件，命中时替换为指定值；没写 `replace` 时替换为等长的 `*`（按字符数，`天穹计划` → `****`）。JSON 和 YAML 都可以，单个词、词清单、规则清单都支持：
+
+```yaml
+# custom.yaml
+- match: [yeshuwei, ysw, 叶书伟]   # 字符串或数组
+  replace: "[姓名]"                 # 可省略，省略时替换为等长 *
+- 天穹计划                          # 只写词 = 等长掩码
+- match: ACME
+  case_sensitive: true             # 默认不区分大小写
+  allow_partial: true              # 默认英文词按整词匹配（ysw 不命中 ysww、user_ysw）
+```
+
+```json
+["yeshuwei", "ysw", {"match": "叶书伟", "replace": "[姓名]"}]
+```
+
+```bash
+PF_CUSTOM_RULES=./custom.yaml ./pf-gateway        # 或 ./pf-gateway -custom ./custom.yaml
+PF_CUSTOM_RULES=a.yaml,b.json ./pf-http          # 逗号分隔可加载多个文件
+```
+
+- 按字面匹配（不是正则），中文不做整词限制。
+- 优先于其他检测层；但词完全落在邮箱、密钥等命中内部时，按外层整段脱敏（避免露出邮箱域名等）。
+- 配置文件读取或解析失败（含字段名写错）时**直接退出**，不会带着残缺规则运行；启动日志只打印词数，不打印词本身。
+
 ### 2. 核心包（推荐自研网关使用）
 
 ```go
@@ -235,6 +262,7 @@ curl -X POST http://127.0.0.1:8088/redact -H 'Content-Type: application/json' \
 | `PF_PORT` | `8088` | http / server | HTTP 监听端口 |
 | `PF_GRPC_PORT` | `8089` | grpc / server | gRPC 监听端口 |
 | `PF_GITLEAKS_TOML` | 空（用内嵌规则） | 全部 | 外部 gitleaks 规则文件路径；加载失败时退回内嵌规则 |
+| `PF_CUSTOM_RULES` / `-custom` | 空 | 全部（`-custom` 仅 gateway） | 自定义匹配配置文件（JSON/YAML），逗号分隔可写多个；加载失败直接退出，见「自定义匹配」 |
 
 ---
 
