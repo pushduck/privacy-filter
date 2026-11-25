@@ -141,6 +141,20 @@ func newSecretDetector(tomlPath string) (*secretDetector, error) {
 	if _, err := toml.DecodeFile(tomlPath, &cfg); err != nil {
 		return nil, err
 	}
+	return sd.compile(cfg), nil
+}
+
+// newSecretDetectorFromTOML 从内存中的 gitleaks.toml 内容构建检测器。
+func newSecretDetectorFromTOML(data []byte) (*secretDetector, error) {
+	var cfg tomlConfig
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
+		return nil, err
+	}
+	return (&secretDetector{}).compile(cfg), nil
+}
+
+// compile 编译规则；一条可用规则都没有时退回内置兜底规则。
+func (sd *secretDetector) compile(cfg tomlConfig) *secretDetector {
 	for _, r := range cfg.Rules {
 		if r.Regex == "" {
 			continue
@@ -159,7 +173,7 @@ func newSecretDetector(tomlPath string) (*secretDetector, error) {
 	if len(sd.rules) == 0 {
 		sd.loadBuiltin()
 	}
-	return sd, nil
+	return sd
 }
 
 // loadBuiltin 在 gitleaks.toml 缺失时提供一组兜底规则。

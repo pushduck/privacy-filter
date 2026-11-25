@@ -8,21 +8,14 @@ import (
 
 	"google.golang.org/grpc"
 
-	"privacyfilter/filter"
 	"privacyfilter/internal/grpcapi"
+	"privacyfilter/internal/rulesload"
 )
 
 func main() {
-	tomlPath := envOr("PF_GITLEAKS_TOML", "rules/gitleaks.toml")
 	addr := ":" + envOr("PF_GRPC_PORT", "8089")
 
-	f, err := filter.New(tomlPath)
-	if err != nil {
-		log.Printf("加载 %s 失败：%v —— 改用内置规则", tomlPath, err)
-		f, _ = filter.New("")
-	}
-	rules, skipped := f.Stats()
-	log.Printf("就绪：gitleaks 规则 %d 条（跳过 %d 条不兼容）", rules, skipped)
+	f := rulesload.Load()
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {

@@ -46,6 +46,15 @@ func New(gitleaksTOML string) (*Filter, error) {
 	return &Filter{secrets: sd}, nil
 }
 
+// NewFromTOML 用内存中的 gitleaks.toml 内容创建 Filter（例如 go:embed 进二进制的规则）。
+func NewFromTOML(data []byte) (*Filter, error) {
+	sd, err := newSecretDetectorFromTOML(data)
+	if err != nil {
+		return nil, err
+	}
+	return &Filter{secrets: sd}, nil
+}
+
 // Stats 返回已加载的规则数，以及因语法不兼容被跳过的规则数。
 func (f *Filter) Stats() (rules, skipped int) {
 	return len(f.secrets.rules), f.secrets.skipped

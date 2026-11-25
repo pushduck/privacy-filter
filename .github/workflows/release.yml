@@ -1,0 +1,37 @@
+name: Release
+
+# 推送 v* 标签时：交叉编译全部平台可执行文件并发布到 GitHub Release。
+# 手动触发（workflow_dispatch）时：只构建，产物作为 workflow artifact 上传，不发布。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: 交叉编译 linux/darwin/windows × amd64/arm64
+        run: scripts/dist.sh "$(git describe --tags --always)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+      - name: 发布到 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/checksums.txt \
+            --title "$GITHUB_REF_NAME" --generate-notes
+
