@@ -107,13 +107,31 @@ pbpaste | curl -s --data-binary @- http://127.0.0.1:8787/_pf/redact | pbcopy
 curl http://127.0.0.1:8787/_pf/health
 ```
 
+**Logging**
+
+```bash
+pf-gateway -log console,~/Library/Logs/pf-gateway.log -log-level hits    # console + file
+pf-gateway -log /tmp/pf.log -log-level full -log-max-len 500            # file only, full field text
+```
+
+| `-log-level` | Content | Contains raw secrets |
+|---|---|---|
+| `basic` (default) | One line per request with hits: hit types and counts. Upstream 4xx/5xx and connection errors are also logged | No |
+| `request` | One line per request: route → full upstream URL, `model`, `stream`, User-Agent, body size (before → after), hit stats, scan time, plus upstream status and time to first byte | No |
+| `hits` | Everything in `request`, plus each hit: type, original text, JSON path (e.g. `messages[3].content[0].text`), and an original / replaced snippet with 24 chars of context on each side | **Yes** |
+| `full` | Everything in `hits`, plus the full original and redacted text of every rewritten field, capped by `-log-max-len` (default 2000 chars, 0 = no limit) | **Yes** |
+
+- Clients like Claude Code resend the whole history every turn. At `hits` / `full`, only **new hits** are printed by default (the summary shows the new count); add `-log-repeat` to print every hit every time.
+- Log files are appended to with mode `0600` and are not rotated. `hits` / `full` write raw secrets to the log — switch back to `basic` and delete the log once you're done debugging.
+- Request headers (including API keys) are never logged at any level.
+
 **What gets redacted, and safety behavior**
 
 - Only conversation content in the request body is rewritten: strings under `content / text / prompt / input / instructions / system / output / arguments / parts`. This covers Anthropic Messages, OpenAI Chat / Responses, Gemini and similar formats.
 - Protocol fields are never touched — `tools` schemas, `model`, ids, thinking `signature`, image base64, `url`, … — so requests stay valid.
 - With no hits, the original bytes are forwarded unchanged. Invalid JSON or an unsupported `Content-Encoding` is rejected, never forwarded raw (fail-closed).
 - Responses (including SSE streams) pass through untouched; model replies are not redacted.
-- Logs record hit types and counts only, never the original text. Listens on localhost by default.
+- By default, logs record hit types and counts only, never the original text (see "Logging" for debugging). Listens on localhost by default.
 
 **Limitations**
 
@@ -169,6 +187,10 @@ Service `filter.v1.PrivacyFilter`, methods `Redact` / `RedactBatch`, defined in 
 | `PF_LISTEN` / `-listen` | `127.0.0.1:8787` | gateway | Listen address; use `0.0.0.0:8787` to serve your LAN |
 | `PF_ROUTES` / `-routes` | empty | gateway | Custom upstreams, `name=URL`, comma-separated, merged with the built-ins |
 | `PF_NO_DEFAULT_ROUTES=1` / `-no-default-routes` | off | gateway | Don't load the built-in upstreams |
+| `PF_LOG` / `-log` | `console` | gateway | Log targets: `console`, `stdout`, or file paths, comma-separated |
+| `PF_LOG_LEVEL` / `-log-level` | `basic` | gateway | `basic` / `request` / `hits` / `full`, see "Logging" above |
+| `PF_LOG_MAX_LEN` / `-log-max-len` | `2000` | gateway | Max characters printed per field at `full`; 0 = no limit |
+| `PF_LOG_REPEAT=1` / `-log-repeat` | off | gateway | Re-print hits already seen in earlier requests |
 | `PF_PORT` | `8088` | http / server | HTTP listen port |
 | `PF_GRPC_PORT` | `8089` | grpc / server | gRPC listen port |
 | `PF_GITLEAKS_TOML` | empty (embedded rules) | all | External gitleaks rules file; falls back to the embedded rules if it fails to load |

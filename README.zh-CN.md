@@ -110,13 +110,31 @@ pbpaste | curl -s --data-binary @- http://127.0.0.1:8787/_pf/redact | pbcopy
 curl http://127.0.0.1:8787/_pf/health
 ```
 
+**日志**
+
+```bash
+pf-gateway -log console,~/Library/Logs/pf-gateway.log -log-level hits    # 同时输出到控制台和文件
+pf-gateway -log /tmp/pf.log -log-level full -log-max-len 500            # 只写文件，打印字段全文
+```
+
+| 级别 `-log-level` | 内容 | 含敏感原文 |
+|---|---|---|
+| `basic`（默认） | 有命中的请求打一行：命中类型与数量；上游返回 4xx/5xx 或连接失败时也会记录 | 否 |
+| `request` | 每个请求一行：路由 → 上游完整地址、`model`、是否 `stream`、User-Agent、请求体大小（脱敏前→后）、命中统计、扫描耗时，以及上游状态码和首字节耗时 | 否 |
+| `hits` | 在 `request` 基础上，列出每处命中：类型、原文、JSON 路径（如 `messages[3].content[0].text`），以及前后各 24 字的「原文 / 替换」对照 | **是** |
+| `full` | 在 `hits` 基础上，打印每个被改写字段的完整原文和替换后文本，长度受 `-log-max-len` 限制（默认 2000 字，0 表示不截断） | **是** |
+
+- Claude Code 等客户端每轮都会重发全部历史。`hits` / `full` 级别默认只打印**新出现的命中**，摘要中以「新增 N」标出；加 `-log-repeat` 可每次都完整打印。
+- 日志文件以追加方式写入，权限为 `0600`，不会自动轮转。`hits` / `full` 级别会把密钥原文写进日志，排查完问题请及时调回 `basic` 并删除日志。
+- 任何级别都不记录请求头（含 API Key）。
+
 **脱敏范围与安全策略**
 
 - 只改写请求体中的对话内容，即 `content / text / prompt / input / instructions / system / output / arguments / parts` 等子树里的字符串。兼容 Anthropic Messages、OpenAI Chat / Responses、Gemini 等格式。
 - 不改动协议字段：`tools` schema、`model`、各类 `id`、thinking `signature`、图片 base64、`url` 等，避免请求被破坏。
 - 未命中时转发原始字节；请求体不是合法 JSON，或使用了不支持的 `Content-Encoding` 时，直接拒绝转发（fail-closed）。
 - 响应（含 SSE 流）原样透传，模型回复不做脱敏。
-- 日志只记录命中类型和数量，不记录原文。默认只监听本机。
+- 默认日志只记录命中类型和数量，不记录原文（需要排查时见上文「日志」）。默认只监听本机。
 
 **局限**
 
@@ -173,6 +191,10 @@ curl -X POST http://127.0.0.1:8088/redact -H 'Content-Type: application/json' \
 | `PF_LISTEN` / `-listen` | `127.0.0.1:8787` | gateway | 监听地址；要给局域网用改成 `0.0.0.0:8787` |
 | `PF_ROUTES` / `-routes` | 空 | gateway | 自定义上游，`名称=URL`，逗号分隔，与内置上游合并 |
 | `PF_NO_DEFAULT_ROUTES=1` / `-no-default-routes` | 关 | gateway | 不加载内置上游 |
+| `PF_LOG` / `-log` | `console` | gateway | 日志输出：`console`、`stdout`、文件路径，逗号分隔可写多个 |
+| `PF_LOG_LEVEL` / `-log-level` | `basic` | gateway | `basic` / `request` / `hits` / `full`，见上文「日志」 |
+| `PF_LOG_MAX_LEN` / `-log-max-len` | `2000` | gateway | `full` 级别下单个字段最多打印的字符数，0 表示不截断 |
+| `PF_LOG_REPEAT=1` / `-log-repeat` | 关 | gateway | 重复打印历史消息中已出现过的命中 |
 | `PF_PORT` | `8088` | http / server | HTTP 监听端口 |
 | `PF_GRPC_PORT` | `8089` | grpc / server | gRPC 监听端口 |
 | `PF_GITLEAKS_TOML` | 空（用内嵌规则） | 全部 | 外部 gitleaks 规则文件路径；加载失败时退回内嵌规则 |

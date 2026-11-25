@@ -1,8 +1,10 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -97,7 +99,7 @@ func TestProxyEndToEnd(t *testing.T) {
 	defer up.Close()
 
 	u, _ := url.Parse(up.URL + "/base")
-	gw := httptest.NewServer(Handler(newFilter(t), map[string]*url.URL{"mine": u}))
+	gw := httptest.NewServer(Handler(newFilter(t), map[string]*url.URL{"mine": u}, Options{}))
 	defer gw.Close()
 
 	resp, err := http.Post(gw.URL+"/mine/v1/chat/completions", "application/json",
@@ -129,5 +131,68 @@ func TestProxyEndToEnd(t *testing.T) {
 	resp.Body.Close()
 	if h["status"] != "ok" {
 		t.Errorf("health：%v", h)
+	}
+}
+
+func TestRequestLogging(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer up.Close()
+	u, _ := url.Parse(up.URL)
+
+	post := func(gw *httptest.Server, body string) {
+		resp, err := http.Post(gw.URL+"/mine/v1/messages", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	turn1 := `{"model":"m-1","stream":true,"messages":[{"role":"user","content":"我的邮箱 a@b.com 谢谢"}]}`
+	turn2 := `{"model":"m-1","messages":[{"role":"user","content":"我的邮箱 a@b.com 谢谢"},{"role":"user","content":"手机 13812345678"}]}`
+
+	var buf bytes.Buffer
+	gw := httptest.NewServer(Handler(newFilter(t), map[string]*url.URL{"mine": u},
+		Options{Logger: log.New(&buf, "", 0), Level: LogHits}))
+	defer gw.Close()
+	post(gw, turn1)
+	post(gw, turn2)
+	out := buf.String()
+	for _, want := range []string{
+		"model=m-1", "stream", "← 418",
+		`[邮箱] "a@b.com"  @ messages[0].content`,
+		"原文：我的邮箱 a@b.com 谢谢", "替换：我的邮箱 [邮箱] 谢谢",
+		"（新增 1）", `[电话] "13812345678"  @ messages[1].content`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("日志缺少 %q：\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, `"a@b.com"`); n != 1 {
+		t.Errorf("历史消息中的命中应去重，实际打印 %d 次：\n%s", n, out)
+	}
+
+	buf.Reset()
+	gw2 := httptest.NewServer(Handler(newFilter(t), map[string]*url.URL{"mine": u},
+		Options{Logger: log.New(&buf, "", 0), Level: LogBasic}))
+	defer gw2.Close()
+	post(gw2, turn1)
+	if strings.Contains(buf.String(), "a@b.com") {
+		t.Errorf("basic 级别不得记录原文：%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "脱敏 1 处：[邮箱]×1") || !strings.Contains(buf.String(), "← 上游 418") {
+		t.Errorf("basic 级别摘要不符：%s", buf.String())
+	}
+}
+
+func TestSnippet(t *testing.T) {
+	text := "前缀前缀前缀前缀前缀前缀前缀前缀前缀前缀前缀前缀前缀 key=AKIAIOSFODNN7EXAMPLE\n后面"
+	r := newFilter(t).Redact(text)
+	if !r.Hit {
+		t.Fatal("应命中")
+	}
+	before, after := snippet(text, r.Entities, r.Entities[0])
+	if !strings.HasPrefix(before, "…") || !strings.Contains(before, "AKIAIOSFODNN7EXAMPLE⏎后面") || strings.Contains(after, "AKIA") {
+		t.Errorf("片段不符：%q / %q", before, after)
 	}
 }

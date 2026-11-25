@@ -10,12 +10,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"privacyfilter/filter"
 )
@@ -49,10 +49,21 @@ func toSet(ks ...string) map[string]bool {
 	return m
 }
 
-// Stats 记录一次请求的命中情况。
+// Change 是一个被改写的字符串字段。
+type Change struct {
+	Path     string          // JSON 路径，例如 messages[3].content[0].text
+	Before   string          // 原文
+	After    string          // 脱敏后
+	Entities []filter.Entity // 命中明细（偏移基于 Before）
+}
+
+// Stats 记录一次请求的命中情况与请求元信息。
 type Stats struct {
-	Count int
-	Types map[string]int
+	Count   int
+	Types   map[string]int
+	Changes []Change
+	Model   string // 顶层 model 字段（若有）
+	Stream  bool   // 顶层 stream 字段（若有）
 }
 
 func (s *Stats) String() string {
@@ -68,20 +79,24 @@ func (s *Stats) String() string {
 	return strings.Join(parts, " ")
 }
 
-// walk 递归遍历 JSON；inContent 表示当前位于对话内容子树中。
-func walk(f *filter.Filter, v any, inContent bool, st *Stats) any {
+// walk 递归遍历 JSON；inContent 表示当前位于对话内容子树中，path 为当前 JSON 路径。
+func walk(f *filter.Filter, v any, inContent bool, path string, st *Stats) any {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, child := range x {
 			if skipKeys[k] {
 				continue
 			}
-			x[k] = walk(f, child, inContent || contentKeys[k], st)
+			p := k
+			if path != "" {
+				p = path + "." + k
+			}
+			x[k] = walk(f, child, inContent || contentKeys[k], p, st)
 		}
 		return x
 	case []any:
 		for i, child := range x {
-			x[i] = walk(f, child, inContent, st)
+			x[i] = walk(f, child, inContent, fmt.Sprintf("%s[%d]", path, i), st)
 		}
 		return x
 	case string:
@@ -96,6 +111,7 @@ func walk(f *filter.Filter, v any, inContent bool, st *Stats) any {
 		for _, e := range r.Entities {
 			st.Types[e.Type]++
 		}
+		st.Changes = append(st.Changes, Change{Path: path, Before: x, After: r.Redacted, Entities: r.Entities})
 		return r.Redacted
 	}
 	return v
@@ -111,7 +127,11 @@ func RedactJSON(f *filter.Filter, body []byte) ([]byte, *Stats, error) {
 		return nil, nil, err
 	}
 	st := &Stats{Types: map[string]int{}}
-	v = walk(f, v, false, st)
+	if top, ok := v.(map[string]any); ok {
+		st.Model, _ = top["model"].(string)
+		st.Stream, _ = top["stream"].(bool)
+	}
+	v = walk(f, v, false, "", st)
 	if st.Count == 0 {
 		return body, st, nil
 	}
@@ -172,11 +192,12 @@ func BuildRoutes(custom string, withDefaults bool) (map[string]*url.URL, error) 
 }
 
 // Handler 返回网关的 http.Handler：/<路由名>/... 反向代理，另含 /_pf/health 与 /_pf/redact。
-func Handler(f *filter.Filter, routes map[string]*url.URL) http.Handler {
+func Handler(f *filter.Filter, routes map[string]*url.URL, opts Options) http.Handler {
+	lg := newReqLogger(opts)
 	mux := http.NewServeMux()
 	names := make([]string, 0, len(routes))
 	for name, up := range routes {
-		mux.Handle("/"+name+"/", proxy(f, name, up))
+		mux.Handle("/"+name+"/", proxy(f, name, up, lg))
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -199,7 +220,7 @@ func Handler(f *filter.Filter, routes map[string]*url.URL) http.Handler {
 	return mux
 }
 
-func proxy(f *filter.Filter, name string, up *url.URL) http.Handler {
+func proxy(f *filter.Filter, name string, up *url.URL, lg *reqLogger) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(up) // 同时改写 Host 头
@@ -207,31 +228,46 @@ func proxy(f *filter.Filter, name string, up *url.URL) http.Handler {
 			pr.Out.URL.RawPath = ""
 		},
 		FlushInterval: -1, // SSE 流式响应即时下发
+		ModifyResponse: func(resp *http.Response) error {
+			lg.response(resp)
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			lg.upstreamError(r, err)
+			http.Error(w, "pf-gateway: 上游请求失败："+err.Error(), http.StatusBadGateway)
+		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := lg.begin(r, name, up)
+		r = r.WithContext(withRecord(r.Context(), rec))
 		if r.Body != nil && r.ContentLength != 0 {
 			body, err := readBody(r)
 			if err != nil {
+				lg.reject(rec, err.Error())
 				http.Error(w, "pf-gateway: "+err.Error(), http.StatusUnsupportedMediaType)
 				return
 			}
+			rec.sizeIn = len(body)
 			if len(body) > 0 && isJSON(r) {
+				t0 := time.Now()
 				out, st, err := RedactJSON(f, body)
+				rec.redactDur = time.Since(t0)
 				if err != nil { // fail-closed：解析不了就不转发原文
+					lg.reject(rec, "请求体不是合法 JSON")
 					http.Error(w, "pf-gateway: 请求体不是合法 JSON，已拒绝转发", http.StatusBadRequest)
 					return
 				}
-				if st.Count > 0 {
-					log.Printf("%s %s 脱敏 %d 处：%s", r.Method, r.URL.Path, st.Count, st)
-				}
+				rec.stats = st
 				body = out
 			} else if len(body) > 0 {
-				log.Printf("%s %s 非 JSON 请求体（%s），原样转发", r.Method, r.URL.Path, r.Header.Get("Content-Type"))
+				rec.note = "非 JSON 请求体（" + r.Header.Get("Content-Type") + "），原样转发"
 			}
+			rec.sizeOut = len(body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			r.ContentLength = int64(len(body))
 			r.Header.Del("Content-Encoding")
 		}
+		lg.request(rec)
 		rp.ServeHTTP(w, r)
 	})
 }

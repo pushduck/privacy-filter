@@ -8,7 +8,7 @@ Go 实现的 PII / 密钥脱敏工具，fork 自 `packyme/privacy-filter`。纯�
 
 - `filter/`：核心检测与替换，对外 API 是 `New`、`NewFromTOML`、`Redact`、`Stats`。改这里就是改检测行为。
 - `rules/`：`gitleaks.toml` 通过 `embed.go` 编译进二进制。
-- `internal/gateway/`：LLM API 脱敏网关。`walk` 按 `contentKeys` / `skipKeys` 遍历 JSON，`proxy` 负责反向代理。
+- `internal/gateway/`：LLM API 脱敏网关。`walk` 按 `contentKeys` / `skipKeys` 遍历 JSON，`proxy` 负责反向代理，`logging.go` 负责分级请求日志。
 - `internal/rulesload/`：各 cmd 共用的规则加载入口。新增 cmd 时用 `rulesload.Load()`，不要自己调 `filter.New`。
 - `internal/httpapi/`、`internal/grpcapi/`：薄封装，不放业务逻辑。
 - `cmd/{gateway,server,http,grpc}`：只做参数解析和启动，产物名为 `pf-<目录名>`。
@@ -37,7 +37,8 @@ make dist     # 交叉编译 6 个平台到 dist/（scripts/dist.sh）
 ## 安全要求（网关）
 
 - **fail-closed**：请求体无法解析、编码不支持时拒绝转发，绝不放行原文。
-- 日志只记录命中类型和数量，**不得记录原文、命中文本或请求头**（请求头里有 API Key）。
+- 日志：默认级别（`basic` / `request`）**不得记录原文或命中文本**；原文只允许在用户显式开启 `hits` / `full` 时输出。**任何级别都不得记录请求头**（请求头里有 API Key）。日志文件权限保持 `0600`。
+- 日志实现在 `internal/gateway/logging.go`。一次请求的多行日志要拼成一次 `Print` 输出，避免并发请求的日志交错。
 - `skipKeys` 中的字段（signature、图片 data、id、tools schema 等）一旦被改写，上游会直接报错。新增协议适配时，先确认哪些字段必须原样保留。
 - 未命中时必须转发原始字节，不要重新序列化。
 - 默认只监听 `127.0.0.1`。
